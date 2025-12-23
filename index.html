@@ -1,0 +1,1043 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comprendre une Attaque DDoS</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            background: #050508;
+            color: #e0e0e0;
+            overflow-x: hidden;
+        }
+
+        #canvas-container {
+            position: relative;
+            width: 100%;
+            height: 85vh;
+            background: radial-gradient(ellipse at center, #0d0d1a 0%, #050508 100%);
+        }
+
+        .hud {
+            position: absolute;
+            font-family: 'Orbitron', monospace;
+            pointer-events: none;
+        }
+
+        .hud-top-left { top: 20px; left: 20px; }
+        .hud-top-right { top: 20px; right: 20px; text-align: right; }
+
+        .hud-label {
+            font-size: 10px;
+            color: #00ffff;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            opacity: 0.7;
+        }
+
+        .hud-value {
+            font-size: 28px;
+            color: #fff;
+            text-shadow: 0 0 20px #00ffff;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+
+        .status-normal { background: #00ff88; box-shadow: 0 0 20px #00ff88; }
+        .status-warning { background: #ffaa00; box-shadow: 0 0 20px #ffaa00; animation: blink 0.5s infinite; }
+        .status-attack { background: #ff0044; box-shadow: 0 0 20px #ff0044; animation: blink 0.2s infinite; }
+        .status-protected { background: #00aaff; box-shadow: 0 0 25px #00aaff; }
+
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        .message-overlay {
+            position: absolute;
+            top: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Orbitron', monospace;
+            text-align: center;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 100;
+        }
+
+        .message-overlay.visible { opacity: 1; }
+
+        .message-main {
+            font-size: 42px;
+            font-weight: 900;
+            color: #ff0044;
+            text-shadow: 0 0 30px #ff0044, 0 0 60px #ff0044;
+            letter-spacing: 8px;
+        }
+
+        .message-sub {
+            font-size: 20px;
+            color: #ff6677;
+            margin-top: 8px;
+            letter-spacing: 4px;
+        }
+
+        .message-overlay.defense-msg .message-main {
+            color: #00ddff;
+            text-shadow: 0 0 30px #00ddff, 0 0 60px #00ddff;
+        }
+
+        .message-overlay.defense-msg .message-sub {
+            color: #66ddff;
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 25px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+            z-index: 100;
+        }
+
+        .button-row { display: flex; gap: 12px; }
+
+        .cyber-btn {
+            font-family: 'Orbitron', monospace;
+            font-size: 10px;
+            letter-spacing: 2px;
+            padding: 12px 22px;
+            border: none;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.3s ease;
+            clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+        }
+
+        .btn-safe { background: linear-gradient(135deg, #00ff88, #00cc66); color: #001a0d; }
+        .btn-attack { background: linear-gradient(135deg, #ff0044, #cc0033); color: #fff; }
+        .btn-attack:disabled { background: linear-gradient(135deg, #666, #444); cursor: not-allowed; }
+        .btn-defense { background: linear-gradient(135deg, #0066cc, #004499); color: #fff; }
+        .btn-defense.active { background: linear-gradient(135deg, #00ccff, #0099ff); box-shadow: 0 0 30px rgba(0, 200, 255, 0.8); }
+        .btn-reset { background: linear-gradient(135deg, #888, #666); color: #fff; }
+
+        .phase-indicator {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 12px 25px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        .phase-label { font-family: 'Orbitron', monospace; font-size: 10px; color: #888; letter-spacing: 2px; }
+        .phase-dots { display: flex; gap: 8px; }
+        .phase-dot {
+            width: 12px; height: 12px; border-radius: 50%;
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            transition: all 0.3s ease;
+        }
+        .phase-dot.active { background: #ff0044; border-color: #ff0044; box-shadow: 0 0 12px #ff0044; }
+
+        .live-stats {
+            position: absolute;
+            bottom: 25px;
+            right: 25px;
+            background: rgba(0, 0, 0, 0.85);
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            padding: 18px 22px;
+            font-family: 'Orbitron', monospace;
+            min-width: 200px;
+        }
+
+        .stats-title { font-size: 9px; color: #00ffff; letter-spacing: 3px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid rgba(0, 255, 255, 0.2); }
+        .stat-row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 11px; }
+        .stat-label { color: #666; }
+        .stat-value { color: #00ffff; font-weight: bold; }
+        .stat-value.warning { color: #ffaa00; }
+        .stat-value.danger { color: #ff0044; }
+        .stat-value.success { color: #00ff88; }
+
+        .progress-bar { width: 100%; height: 6px; background: rgba(255, 255, 255, 0.1); margin-top: 12px; border-radius: 3px; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #00ff88, #00ffff); transition: width 0.3s; border-radius: 3px; }
+        .progress-fill.warning { background: linear-gradient(90deg, #ffcc00, #ff8800); }
+        .progress-fill.overload { background: linear-gradient(90deg, #ff6600, #ff0044); }
+        .progress-fill.protected { background: linear-gradient(90deg, #0088ff, #00ddff); }
+
+        .legend {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 30px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 14px 30px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 13px;
+        }
+
+        .legend-item { display: flex; align-items: center; gap: 10px; }
+        .legend-dot { width: 14px; height: 14px; border-radius: 50%; }
+        .dot-server { width: 16px; height: 16px; background: linear-gradient(135deg, #00ffff, #0088ff); border-radius: 3px; }
+        .dot-client { background: #00ff88; }
+        .dot-attacker { background: #ff0044; }
+        .dot-shield { background: transparent; border: 3px solid #00ccff; }
+
+        .explanation { max-width: 1200px; margin: 0 auto; padding: 50px 40px; }
+        .section-title { font-family: 'Orbitron', monospace; font-size: 26px; color: #00ffff; margin-bottom: 35px; }
+        .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+        .info-card { background: linear-gradient(145deg, rgba(15, 15, 30, 0.95), rgba(8, 8, 20, 0.95)); border: 1px solid rgba(0, 255, 255, 0.15); padding: 24px; position: relative; }
+        .info-card::before { content: ''; position: absolute; top: 0; left: 0; width: 3px; height: 100%; background: linear-gradient(180deg, #00ffff, #ff0044); }
+        .card-icon { font-size: 36px; margin-bottom: 15px; }
+        .card-title { font-family: 'Orbitron', monospace; font-size: 14px; color: #00ffff; margin-bottom: 10px; }
+        .card-text { font-size: 14px; line-height: 1.6; color: #a0a0a0; }
+        .card-text strong { color: #fff; }
+
+        /* CTA Section */
+        .cta-section {
+            margin-top: 60px;
+            padding: 50px 40px;
+            background: linear-gradient(135deg, rgba(0, 100, 150, 0.15) 0%, rgba(0, 50, 100, 0.25) 100%);
+            border: 1px solid rgba(0, 255, 255, 0.2);
+            border-radius: 8px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cta-section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, #00ffff, transparent);
+        }
+
+        .cta-icon {
+            font-size: 50px;
+            margin-bottom: 20px;
+        }
+
+        .cta-title {
+            font-family: 'Orbitron', monospace;
+            font-size: 28px;
+            color: #fff;
+            margin-bottom: 15px;
+            letter-spacing: 2px;
+        }
+
+        .cta-subtitle {
+            font-size: 18px;
+            color: #00ffff;
+            margin-bottom: 25px;
+            font-weight: 600;
+        }
+
+        .cta-text {
+            font-size: 16px;
+            color: #b0b0b0;
+            max-width: 700px;
+            margin: 0 auto 35px;
+            line-height: 1.7;
+        }
+
+        .cta-features {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-bottom: 35px;
+            flex-wrap: wrap;
+        }
+
+        .cta-feature {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            color: #ccc;
+        }
+
+        .cta-feature-icon {
+            color: #00ff88;
+            font-size: 18px;
+        }
+
+        .cta-button {
+            display: inline-block;
+            font-family: 'Orbitron', monospace;
+            font-size: 14px;
+            letter-spacing: 3px;
+            padding: 18px 50px;
+            background: linear-gradient(135deg, #00ffff, #0088cc);
+            color: #001a1f;
+            text-decoration: none;
+            font-weight: 700;
+            transition: all 0.3s ease;
+            clip-path: polygon(15px 0, 100% 0, calc(100% - 15px) 100%, 0 100%);
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.3);
+        }
+
+        .cta-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 0 50px rgba(0, 255, 255, 0.5);
+            background: linear-gradient(135deg, #00ffff, #00aaff);
+        }
+
+        .cta-contact {
+            margin-top: 25px;
+            font-size: 14px;
+            color: #888;
+        }
+
+        .cta-contact a {
+            color: #00ffff;
+            text-decoration: none;
+        }
+
+        .cta-contact a:hover {
+            text-decoration: underline;
+        }
+
+        @media (max-width: 768px) {
+            #canvas-container { height: 65vh; }
+            .button-row { flex-wrap: wrap; justify-content: center; }
+            .cyber-btn { flex: 1 1 45%; min-width: 100px; }
+            .live-stats { display: none; }
+            .legend { gap: 15px; font-size: 11px; }
+            .message-main { font-size: 28px; }
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container">
+        <div class="hud hud-top-left">
+            <div class="hud-label">Statut Serveur</div>
+            <div class="hud-value">
+                <span class="status-indicator status-normal" id="status-light"></span>
+                <span id="status-text">EN LIGNE</span>
+            </div>
+        </div>
+        
+        <div class="hud hud-top-right">
+            <div class="hud-label">Requêtes / Seconde</div>
+            <div class="hud-value" id="requests-display">48</div>
+        </div>
+
+        <div class="legend">
+            <div class="legend-item"><div class="legend-dot dot-server"></div><span>Serveur</span></div>
+            <div class="legend-item"><div class="legend-dot dot-client"></div><span>Client</span></div>
+            <div class="legend-item"><div class="legend-dot dot-attacker"></div><span>Attaquant</span></div>
+            <div class="legend-item"><div class="legend-dot dot-shield"></div><span>Bouclier</span></div>
+        </div>
+
+        <div class="message-overlay" id="message-overlay">
+            <div class="message-main">SERVICE INDISPONIBLE</div>
+            <div class="message-sub">503 - SERVER OVERLOAD</div>
+        </div>
+
+        <div class="live-stats">
+            <div class="stats-title">MONITEUR</div>
+            <div class="stat-row"><span class="stat-label">CLIENTS</span><span class="stat-value" id="stat-users">8</span></div>
+            <div class="stat-row"><span class="stat-label">ATTAQUANTS</span><span class="stat-value" id="stat-attackers">0</span></div>
+            <div class="stat-row"><span class="stat-label">ÉLIMINÉS</span><span class="stat-value success" id="stat-blocked">0</span></div>
+            <div class="stat-row"><span class="stat-label">CHARGE</span><span class="stat-value" id="stat-capacity">8%</span></div>
+            <div class="progress-bar"><div class="progress-fill" id="capacity-bar" style="width: 8%"></div></div>
+        </div>
+
+        <div class="controls">
+            <div class="phase-indicator">
+                <span class="phase-label">INTENSITÉ</span>
+                <div class="phase-dots">
+                    <div class="phase-dot" id="phase-1"></div>
+                    <div class="phase-dot" id="phase-2"></div>
+                    <div class="phase-dot" id="phase-3"></div>
+                    <div class="phase-dot" id="phase-4"></div>
+                    <div class="phase-dot" id="phase-5"></div>
+                </div>
+            </div>
+            <div class="button-row">
+                <button class="cyber-btn btn-safe" onclick="resetScene()">Normal</button>
+                <button class="cyber-btn btn-attack" id="attack-btn" onclick="increaseAttack()">+ Attaque</button>
+                <button class="cyber-btn btn-defense" id="defense-btn" onclick="toggleDefense()">🛡️ Anti-DDoS</button>
+                <button class="cyber-btn btn-reset" onclick="fullReset()">Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <section class="explanation">
+        <h2 class="section-title">Qu'est-ce qu'une attaque DDoS ?</h2>
+        <div class="cards-grid">
+            <div class="info-card">
+                <div class="card-icon">🌐</div>
+                <h3 class="card-title">Le Principe</h3>
+                <p class="card-text">DDoS signifie <strong>"Distributed Denial of Service"</strong>. L'objectif est de submerger un serveur avec des requêtes massives, le rendant incapable de répondre aux utilisateurs légitimes.</p>
+            </div>
+            <div class="info-card">
+                <div class="card-icon">🤖</div>
+                <h3 class="card-title">Les Botnets</h3>
+                <p class="card-text">Les attaquants utilisent des <strong>botnets</strong> : des réseaux d'ordinateurs infectés qui envoient des requêtes simultanément sans que leurs propriétaires le sachent.</p>
+            </div>
+            <div class="info-card">
+                <div class="card-icon">🚪</div>
+                <h3 class="card-title">L'Analogie</h3>
+                <p class="card-text">Imaginez une boutique avec une seule porte. Lors d'une attaque DDoS, des milliers de personnes bloquent l'entrée, empêchant les vrais clients d'accéder.</p>
+            </div>
+            <div class="info-card">
+                <div class="card-icon">🛡️</div>
+                <h3 class="card-title">La Défense</h3>
+                <p class="card-text">Les systèmes anti-DDoS (Cloudflare, AWS Shield) détectent et <strong>éliminent les attaquants</strong> progressivement, permettant aux vrais clients de se reconnecter.</p>
+            </div>
+            <div class="info-card">
+                <div class="card-icon">💥</div>
+                <h3 class="card-title">Conséquences</h3>
+                <p class="card-text">Site inaccessible, pertes financières, atteinte à la réputation, et parfois diversion pour une attaque plus sophistiquée.</p>
+            </div>
+            <div class="info-card">
+                <div class="card-icon">⚖️</div>
+                <h3 class="card-title">Aspect Légal</h3>
+                <p class="card-text">En France (Art. 323-2 Code pénal) : jusqu'à <strong>5 ans de prison</strong> et <strong>150 000€ d'amende</strong>.</p>
+            </div>
+        </div>
+
+        <!-- Call to Action YPSI -->
+        <div class="cta-section">
+            <div class="cta-icon">🛡️</div>
+            <h2 class="cta-title">PROTÉGEZ VOTRE ENTREPRISE</h2>
+            <p class="cta-subtitle">Ne laissez pas les cyberattaques paralyser votre activité</p>
+            <p class="cta-text">
+                <strong>YPSI</strong> vous accompagne dans la protection de vos infrastructures contre les attaques DDoS 
+                et toutes les menaces cyber. Audit, conseil, formation et gestion de crise : 
+                bénéficiez d'une expertise reconnue pour sécuriser votre organisation.
+            </p>
+            <div class="cta-features">
+                <div class="cta-feature">
+                    <span class="cta-feature-icon">✓</span>
+                    <span>Audit de sécurité</span>
+                </div>
+                <div class="cta-feature">
+                    <span class="cta-feature-icon">✓</span>
+                    <span>Gestion de crise</span>
+                </div>
+                <div class="cta-feature">
+                    <span class="cta-feature-icon">✓</span>
+                    <span>Formation OSINT</span>
+                </div>
+                <div class="cta-feature">
+                    <span class="cta-feature-icon">✓</span>
+                    <span>Exercices cyber</span>
+                </div>
+            </div>
+            <a href="https://ypsi.fr" target="_blank" class="cta-button">CONTACTEZ YPSI</a>
+            <p class="cta-contact">
+                Ou écrivez-nous directement : <a href="mailto:bonjour@ypsi.fr">bonjour@ypsi.fr</a>
+            </p>
+        </div>
+    </section>
+
+    <script>
+        let scene, camera, renderer;
+        let serverGroup, shieldGroup;
+        let clients = [];
+        let attackers = [];
+        let packets = [];
+        let dyingAttackers = []; // Attackers being eliminated
+        let attackPhase = 0;
+        let defenseActive = false;
+        let eliminatedCount = 0;
+        let frameCount = 0;
+        let eliminateTimer = 0;
+        let reconnectTimer = 0;
+
+        const MAX_PHASES = 5;
+        const ATTACKERS_PER_PHASE = [0, 20, 50, 100, 180, 300];
+        const SERVER_CAPACITY = 400;
+        const SHIELD_RADIUS = 22;
+        const MAX_PACKETS = 120;
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+            
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(55, container.clientWidth / container.clientHeight, 0.1, 1000);
+            camera.position.set(0, 55, 80);
+            camera.lookAt(0, 10, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+            renderer.setClearColor(0x050508, 1);
+            container.appendChild(renderer.domElement);
+
+            scene.add(new THREE.AmbientLight(0x404080, 0.5));
+            const light = new THREE.DirectionalLight(0xffffff, 0.7);
+            light.position.set(10, 50, 30);
+            scene.add(light);
+
+            createGrid();
+            createServer();
+            createShield();
+
+            for (let i = 0; i < 8; i++) createClient();
+
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        function createGrid() {
+            const grid = new THREE.GridHelper(160, 40, 0x004455, 0x001a22);
+            grid.material.opacity = 0.4;
+            grid.material.transparent = true;
+            scene.add(grid);
+        }
+
+        function createServer() {
+            serverGroup = new THREE.Group();
+
+            const tower = new THREE.Mesh(
+                new THREE.BoxGeometry(14, 30, 12),
+                new THREE.MeshPhongMaterial({ color: 0x1a1a2e, emissive: 0x0066aa, emissiveIntensity: 0.2 })
+            );
+            tower.position.y = 15;
+            serverGroup.add(tower);
+
+            for (let i = 0; i < 6; i++) {
+                const rack = new THREE.Mesh(
+                    new THREE.BoxGeometry(13, 3.5, 11),
+                    new THREE.MeshPhongMaterial({ color: 0x0a0a18 })
+                );
+                rack.position.y = 4 + i * 4.5;
+                serverGroup.add(rack);
+
+                for (let j = 0; j < 4; j++) {
+                    const led = new THREE.Mesh(
+                        new THREE.BoxGeometry(0.5, 0.5, 0.15),
+                        new THREE.MeshBasicMaterial({ color: 0x00ff88 })
+                    );
+                    led.position.set(-4 + j * 2.5, 4 + i * 4.5, 5.5);
+                    led.userData.isLed = true;
+                    serverGroup.add(led);
+                }
+            }
+
+            const topGlow = new THREE.Mesh(
+                new THREE.SphereGeometry(2, 12, 12),
+                new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.8 })
+            );
+            topGlow.position.y = 33;
+            topGlow.userData.isTopGlow = true;
+            serverGroup.add(topGlow);
+
+            const baseRing = new THREE.Mesh(
+                new THREE.TorusGeometry(10, 0.6, 8, 32),
+                new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.7 })
+            );
+            baseRing.rotation.x = Math.PI / 2;
+            baseRing.position.y = 0.5;
+            baseRing.userData.isBaseRing = true;
+            serverGroup.add(baseRing);
+
+            scene.add(serverGroup);
+        }
+
+        function createShield() {
+            shieldGroup = new THREE.Group();
+            shieldGroup.visible = false;
+
+            const shield = new THREE.Mesh(
+                new THREE.IcosahedronGeometry(SHIELD_RADIUS, 1),
+                new THREE.MeshBasicMaterial({ color: 0x00ddff, wireframe: true, transparent: true, opacity: 0.4 })
+            );
+            shield.position.y = 15;
+            shieldGroup.add(shield);
+
+            const ring = new THREE.Mesh(
+                new THREE.TorusGeometry(SHIELD_RADIUS, 0.5, 8, 32),
+                new THREE.MeshBasicMaterial({ color: 0x00ccff, transparent: true, opacity: 0.6 })
+            );
+            ring.rotation.x = Math.PI / 2;
+            ring.position.y = 15;
+            ring.userData.isRing = true;
+            shieldGroup.add(ring);
+
+            scene.add(shieldGroup);
+        }
+
+        function createClient() {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 45 + Math.random() * 20;
+
+            const mesh = new THREE.Mesh(
+                new THREE.SphereGeometry(1.5, 12, 12),
+                new THREE.MeshPhongMaterial({ color: 0x00ff88, emissive: 0x00ff88, emissiveIntensity: 0.5 })
+            );
+
+            mesh.position.set(Math.cos(angle) * distance, 4, Math.sin(angle) * distance);
+            mesh.userData = {
+                type: 'client',
+                angle: angle,
+                distance: distance,
+                speed: 0.001 + Math.random() * 0.001,
+                packetTimer: Math.random() * 80,
+                packetInterval: 100 + Math.random() * 50,
+                connected: true,
+                failCount: 0
+            };
+
+            scene.add(mesh);
+            clients.push(mesh);
+        }
+
+        function createAttacker() {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 55 + Math.random() * 25;
+
+            const mesh = new THREE.Mesh(
+                new THREE.OctahedronGeometry(1.2, 0),
+                new THREE.MeshPhongMaterial({ color: 0xff0044, emissive: 0xff0044, emissiveIntensity: 0.6 })
+            );
+
+            mesh.position.set(Math.cos(angle) * distance, 4, Math.sin(angle) * distance);
+            mesh.userData = {
+                type: 'attacker',
+                angle: angle,
+                distance: distance,
+                targetDistance: SHIELD_RADIUS + 6,
+                speed: 0.004 + Math.random() * 0.004,
+                packetTimer: Math.random() * 15,
+                packetInterval: 8 + Math.random() * 8
+            };
+
+            scene.add(mesh);
+            attackers.push(mesh);
+        }
+
+        function eliminateAttacker(attacker) {
+            // Move from attackers to dyingAttackers
+            const idx = attackers.indexOf(attacker);
+            if (idx > -1) {
+                attackers.splice(idx, 1);
+                attacker.userData.dying = true;
+                attacker.userData.deathProgress = 0;
+                dyingAttackers.push(attacker);
+                eliminatedCount++;
+            }
+        }
+
+        function createPacket(source, type) {
+            if (packets.length >= MAX_PACKETS) return;
+
+            const colors = { request: 0x44ffaa, response: 0xffdd00, attack: 0xff2255 };
+            const packet = new THREE.Mesh(
+                new THREE.SphereGeometry(type === 'attack' ? 0.4 : 0.5, 6, 6),
+                new THREE.MeshBasicMaterial({ color: colors[type], transparent: true, opacity: 1 })
+            );
+
+            packet.position.copy(source.position);
+            
+            const targetPos = type === 'response' 
+                ? source.userData.targetClient.position.clone()
+                : new THREE.Vector3(0, 15, 0);
+
+            packet.userData = {
+                type: type,
+                startPos: source.position.clone(),
+                targetPos: targetPos,
+                progress: 0,
+                speed: type === 'attack' ? 0.03 : 0.025,
+                source: source,
+                bouncing: false,
+                bounceDir: null
+            };
+
+            scene.add(packet);
+            packets.push(packet);
+        }
+
+        function increaseAttack() {
+            if (attackPhase >= MAX_PHASES) return;
+            attackPhase++;
+            updatePhaseIndicator();
+
+            const target = ATTACKERS_PER_PHASE[attackPhase];
+            const toAdd = target - attackers.length;
+
+            let added = 0;
+            const interval = setInterval(() => {
+                if (added >= toAdd) { clearInterval(interval); return; }
+                for (let i = 0; i < Math.min(8, toAdd - added); i++) {
+                    createAttacker();
+                    added++;
+                }
+            }, 50);
+
+            if (attackPhase >= MAX_PHASES) {
+                document.getElementById('attack-btn').disabled = true;
+            }
+        }
+
+        function toggleDefense() {
+            defenseActive = !defenseActive;
+            const btn = document.getElementById('defense-btn');
+            const msg = document.getElementById('message-overlay');
+
+            if (defenseActive) {
+                btn.classList.add('active');
+                btn.textContent = '🛡️ ACTIF';
+                shieldGroup.visible = true;
+                eliminateTimer = 0;
+                reconnectTimer = 0;
+
+                msg.querySelector('.message-main').textContent = 'PROTECTION ACTIVÉE';
+                msg.querySelector('.message-sub').textContent = 'Élimination des menaces en cours...';
+                msg.classList.add('visible', 'defense-msg');
+                setTimeout(() => msg.classList.remove('visible', 'defense-msg'), 2500);
+            } else {
+                btn.classList.remove('active');
+                btn.textContent = '🛡️ Anti-DDoS';
+                shieldGroup.visible = false;
+            }
+        }
+
+        function updatePhaseIndicator() {
+            for (let i = 1; i <= MAX_PHASES; i++) {
+                document.getElementById(`phase-${i}`).classList.toggle('active', i <= attackPhase);
+            }
+        }
+
+        function resetScene() {
+            attackPhase = 0;
+            eliminatedCount = 0;
+            updatePhaseIndicator();
+
+            attackers.forEach(a => scene.remove(a));
+            attackers = [];
+            dyingAttackers.forEach(a => scene.remove(a));
+            dyingAttackers = [];
+            packets.forEach(p => scene.remove(p));
+            packets = [];
+
+            clients.forEach(c => {
+                c.userData.connected = true;
+                c.userData.failCount = 0;
+                c.material.color.setHex(0x00ff88);
+                c.material.emissive.setHex(0x00ff88);
+            });
+
+            document.getElementById('attack-btn').disabled = false;
+            resetServerVisuals();
+        }
+
+        function fullReset() {
+            defenseActive = false;
+            shieldGroup.visible = false;
+            document.getElementById('defense-btn').classList.remove('active');
+            document.getElementById('defense-btn').textContent = '🛡️ Anti-DDoS';
+            resetScene();
+        }
+
+        function resetServerVisuals() {
+            serverGroup.children.forEach(child => {
+                if (child.userData.isLed) child.material.color.setHex(0x00ff88);
+                if (child.userData.isBaseRing || child.userData.isTopGlow) child.material.color.setHex(0x00ffff);
+            });
+            serverGroup.position.set(0, 0, 0);
+        }
+
+        function getServerLoad() {
+            const clientLoad = clients.filter(c => c.userData.connected).length * 5;
+            const attackLoad = attackers.length * 25;
+            return clientLoad + attackLoad;
+        }
+
+        function updateUI(capacity) {
+            const connectedClients = clients.filter(c => c.userData.connected).length;
+            document.getElementById('stat-users').textContent = connectedClients;
+            document.getElementById('stat-attackers').textContent = attackers.length;
+            document.getElementById('stat-blocked').textContent = eliminatedCount;
+            document.getElementById('stat-capacity').textContent = Math.round(capacity) + '%';
+            document.getElementById('requests-display').textContent = Math.round(getServerLoad() * 8);
+
+            const bar = document.getElementById('capacity-bar');
+            const capVal = document.getElementById('stat-capacity');
+            bar.style.width = Math.min(100, capacity) + '%';
+
+            const light = document.getElementById('status-light');
+            const text = document.getElementById('status-text');
+            const msg = document.getElementById('message-overlay');
+
+            if (defenseActive && attackers.length === 0) {
+                light.className = 'status-indicator status-protected';
+                text.textContent = 'PROTÉGÉ';
+                bar.className = 'progress-fill protected';
+                capVal.className = 'stat-value';
+                msg.classList.remove('visible');
+            } else if (defenseActive && capacity < 60) {
+                light.className = 'status-indicator status-protected';
+                text.textContent = 'NETTOYAGE...';
+                bar.className = 'progress-fill protected';
+                capVal.className = 'stat-value';
+                msg.classList.remove('visible');
+            } else if (capacity >= 95) {
+                light.className = 'status-indicator status-attack';
+                text.textContent = 'SURCHARGÉ';
+                bar.className = 'progress-fill overload';
+                capVal.className = 'stat-value danger';
+                msg.querySelector('.message-main').textContent = 'SERVICE INDISPONIBLE';
+                msg.querySelector('.message-sub').textContent = '503 - SERVER OVERLOAD';
+                msg.classList.remove('defense-msg');
+                msg.classList.add('visible');
+            } else if (capacity >= 70) {
+                light.className = 'status-indicator status-attack';
+                text.textContent = 'CRITIQUE';
+                bar.className = 'progress-fill overload';
+                capVal.className = 'stat-value danger';
+                msg.classList.remove('visible');
+            } else if (capacity >= 40) {
+                light.className = 'status-indicator status-warning';
+                text.textContent = 'SOUS PRESSION';
+                bar.className = 'progress-fill warning';
+                capVal.className = 'stat-value warning';
+                msg.classList.remove('visible');
+            } else {
+                light.className = 'status-indicator status-normal';
+                text.textContent = 'EN LIGNE';
+                bar.className = 'progress-fill';
+                capVal.className = 'stat-value';
+                msg.classList.remove('visible');
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            frameCount++;
+
+            const time = Date.now() * 0.001;
+            const load = getServerLoad();
+            const capacity = Math.min(100, (load / SERVER_CAPACITY) * 100);
+            const serverOverloaded = capacity >= 90 && !defenseActive;
+
+            if (frameCount % 3 === 0) updateUI(capacity);
+
+            // Camera
+            camera.position.x = Math.sin(time * 0.04) * 10;
+            camera.lookAt(0, 12, 0);
+
+            // Server glow
+            const glow = serverGroup.children.find(c => c.userData.isTopGlow);
+            if (glow) glow.scale.setScalar(1 + Math.sin(time * 3) * 0.15);
+
+            // Shield rotation
+            if (defenseActive) {
+                shieldGroup.children[0].rotation.y += 0.005;
+                const ring = shieldGroup.children.find(c => c.userData.isRing);
+                if (ring) ring.rotation.z += 0.015;
+            }
+
+            // === DEFENSE: Eliminate attackers progressively ===
+            if (defenseActive && attackers.length > 0) {
+                eliminateTimer++;
+                // Every 8 frames, eliminate 1-3 attackers
+                if (eliminateTimer >= 8) {
+                    eliminateTimer = 0;
+                    const toEliminate = Math.min(attackers.length, 1 + Math.floor(Math.random() * 2));
+                    for (let i = 0; i < toEliminate; i++) {
+                        if (attackers.length > 0) {
+                            // Pick random attacker
+                            const idx = Math.floor(Math.random() * attackers.length);
+                            eliminateAttacker(attackers[idx]);
+                        }
+                    }
+                }
+            }
+
+            // === DEFENSE: Reconnect clients progressively ===
+            if (defenseActive && capacity < 50) {
+                reconnectTimer++;
+                if (reconnectTimer >= 30) {
+                    reconnectTimer = 0;
+                    // Find a disconnected client and reconnect
+                    const disconnected = clients.filter(c => !c.userData.connected);
+                    if (disconnected.length > 0) {
+                        const client = disconnected[Math.floor(Math.random() * disconnected.length)];
+                        client.userData.connected = true;
+                        client.userData.failCount = 0;
+                        client.material.color.setHex(0x00ff88);
+                        client.material.emissive.setHex(0x00ff88);
+                    }
+                }
+            }
+
+            // Animate dying attackers (fade out and shrink)
+            for (let i = dyingAttackers.length - 1; i >= 0; i--) {
+                const attacker = dyingAttackers[i];
+                attacker.userData.deathProgress += 0.05;
+                
+                const progress = attacker.userData.deathProgress;
+                attacker.scale.setScalar(1 - progress);
+                attacker.material.opacity = 1 - progress;
+                attacker.material.transparent = true;
+                
+                // Flash blue as they die (blocked by defense)
+                if (progress < 0.3) {
+                    attacker.material.color.setHex(0x00ddff);
+                    attacker.material.emissive.setHex(0x00ddff);
+                }
+                
+                attacker.position.y += 0.2; // Float up as dying
+                attacker.rotation.x += 0.2;
+                attacker.rotation.z += 0.2;
+
+                if (progress >= 1) {
+                    scene.remove(attacker);
+                    dyingAttackers.splice(i, 1);
+                }
+            }
+
+            // Clients
+            clients.forEach(client => {
+                client.userData.angle += client.userData.speed;
+                client.position.x = Math.cos(client.userData.angle) * client.userData.distance;
+                client.position.z = Math.sin(client.userData.angle) * client.userData.distance;
+
+                client.userData.packetTimer++;
+                if (client.userData.packetTimer >= client.userData.packetInterval && client.userData.connected) {
+                    client.userData.packetTimer = 0;
+
+                    if (serverOverloaded) {
+                        client.userData.failCount++;
+                        client.material.color.setHex(0xffaa00);
+                        client.material.emissive.setHex(0xffaa00);
+                        if (client.userData.failCount >= 3) {
+                            client.userData.connected = false;
+                            client.material.color.setHex(0x555555);
+                            client.material.emissive.setHex(0x222222);
+                        }
+                    } else {
+                        createPacket(client, 'request');
+                        client.userData.failCount = 0;
+                        client.material.color.setHex(0x00ff88);
+                        client.material.emissive.setHex(0x00ff88);
+                    }
+                }
+            });
+
+            // Attackers
+            attackers.forEach(attacker => {
+                if (attacker.userData.distance > attacker.userData.targetDistance) {
+                    attacker.userData.distance -= 0.05;
+                }
+
+                attacker.userData.angle += attacker.userData.speed;
+                attacker.position.x = Math.cos(attacker.userData.angle) * attacker.userData.distance;
+                attacker.position.z = Math.sin(attacker.userData.angle) * attacker.userData.distance;
+
+                attacker.rotation.x += 0.04;
+                attacker.rotation.y += 0.05;
+
+                // Only send packets if defense not active
+                if (!defenseActive) {
+                    attacker.userData.packetTimer++;
+                    if (attacker.userData.packetTimer >= attacker.userData.packetInterval) {
+                        attacker.userData.packetTimer = 0;
+                        createPacket(attacker, 'attack');
+                    }
+                }
+            });
+
+            // Packets
+            for (let i = packets.length - 1; i >= 0; i--) {
+                const packet = packets[i];
+
+                if (packet.userData.bouncing) {
+                    packet.position.add(packet.userData.bounceDir);
+                    packet.userData.bounceDir.y -= 0.008;
+                    packet.material.opacity -= 0.03;
+
+                    if (packet.material.opacity <= 0) {
+                        scene.remove(packet);
+                        packets.splice(i, 1);
+                    }
+                    continue;
+                }
+
+                packet.userData.progress += packet.userData.speed;
+
+                // Shield collision for attack packets
+                if (defenseActive && packet.userData.type === 'attack') {
+                    const distToCenter = new THREE.Vector2(packet.position.x, packet.position.z).length();
+                    const heightOk = packet.position.y > 0 && packet.position.y < 35;
+                    
+                    if (distToCenter <= SHIELD_RADIUS && heightOk && packet.userData.progress > 0.15) {
+                        const dir = new THREE.Vector3(packet.position.x, 0, packet.position.z).normalize();
+                        packet.userData.bouncing = true;
+                        packet.userData.bounceDir = dir.multiplyScalar(0.6);
+                        packet.userData.bounceDir.y = 0.2;
+                        packet.material.color.setHex(0x00ddff);
+                        continue;
+                    }
+                }
+
+                if (packet.userData.progress >= 1) {
+                    if (packet.userData.type === 'request') {
+                        const response = { position: new THREE.Vector3(0, 15, 0), userData: { targetClient: packet.userData.source } };
+                        createPacket(response, 'response');
+                    }
+                    scene.remove(packet);
+                    packets.splice(i, 1);
+                } else {
+                    packet.position.lerpVectors(packet.userData.startPos, packet.userData.targetPos, packet.userData.progress);
+                    packet.position.y += Math.sin(packet.userData.progress * Math.PI) * 5;
+                }
+            }
+
+            // Server stress
+            if (capacity > 50 && !defenseActive) {
+                const stress = (capacity - 50) / 50;
+                serverGroup.children.forEach(child => {
+                    if (child.userData.isLed) child.material.color.setHex(capacity > 80 ? 0xff0044 : 0xffaa00);
+                    if (child.userData.isBaseRing || child.userData.isTopGlow) child.material.color.setHex(capacity > 80 ? 0xff0044 : 0xffaa00);
+                });
+                serverGroup.position.x = (Math.random() - 0.5) * stress * 0.6;
+                serverGroup.position.z = (Math.random() - 0.5) * stress * 0.6;
+            } else {
+                resetServerVisuals();
+                if (defenseActive) {
+                    serverGroup.children.forEach(child => {
+                        if (child.userData.isBaseRing || child.userData.isTopGlow) child.material.color.setHex(0x00aaff);
+                    });
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            const container = document.getElementById('canvas-container');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
